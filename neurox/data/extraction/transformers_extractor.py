@@ -118,7 +118,7 @@ def aggregate_repr(state, start, end, aggregation):
 
 
 def extract_sentence_representations(
-    sentence,
+    sentence_list,
     model,
     tokenizer,
     device="cpu",
@@ -140,6 +140,10 @@ def extract_sentence_representations(
     Parameters
     ----------
     sentence : str
+        List of sentences for which the extraction needs to be done. The 
+        returned output will have representations for exactly the same number
+        of elements as tokens in the list (counted by ???) TODO: what count.
+
         Sentence for which the extraction needs to be done. The returned output
         will have representations for exactly the same number of elements as
         tokens in this sentence (counted by `sentence.split(' ')`).
@@ -191,7 +195,7 @@ def extract_sentence_representations(
     ]
     special_tokens_ids = tokenizer.convert_tokens_to_ids(special_tokens)
 
-    original_tokens = sentence.split(" ")
+    original_tokens = " ".join(sentence.strip() for sentence in sentence_list).split(" ")
 
     # Add letters and spaces around each word since some tokenizers are context sensitive
     tmp_tokens = []
@@ -228,7 +232,10 @@ def extract_sentence_representations(
                 ), "Got different tokenization for already processed word"
             else:
                 tokenization_counts[token] = len(tok_ids)
-        ids = tokenizer.encode(sentence, truncation=True)
+        if len(sentence_list) == 1:
+            ids = tokenizer.encode(sentence_list[0], truncation=True)
+        else:
+            ids = tokenizer.encode(sentence_list[0], sentence_list[1], truncation=True)
         input_ids = torch.tensor([ids]).to(device)
         # Hugging Face format: tuple of torch.FloatTensor of shape (batch_size, sequence_length, hidden_size)
         # Tuple has 13 elements for base model: embedding outputs + hidden states at each layer
@@ -245,7 +252,7 @@ def extract_sentence_representations(
             ]
         all_hidden_states = np.array(all_hidden_states, dtype=dtype)
 
-    print('Sentence         : "%s"' % (sentence))
+    print('Sentence         : "%s"' % " ".join(sentence for sentence in sentence_list))
     print("Original    (%03d): %s" % (len(original_tokens), original_tokens))
     print(
         "Tokenized   (%03d): %s"
@@ -321,7 +328,7 @@ def extract_sentence_representations(
                     assert prev_token_type != "DROPPED", (
                         "A token dropped by the tokenizer appeared next "
                         + "to a special token. Detokenizer cannot resolve "
-                        + f"the ambiguity, please remove '{sentence}' from"
+                        + f"the ambiguity, please remove '{' '.join(sentence for sentence in sentence_list)}' from"
                         + "the dataset, or try a different tokenizer"
                     )
                     prev_token_type = "SPECIAL"
@@ -357,7 +364,7 @@ def extract_sentence_representations(
             assert prev_token_type != "SPECIAL", (
                 "A token dropped by the tokenizer appeared next "
                 + "to a special token. Detokenizer cannot resolve "
-                + f"the ambiguity, please remove '{sentence}' from"
+                + f"the ambiguity, please remove '{' '.join(sentence for sentence in sentence_list)}' from"
                 + "the dataset, or try a different tokenizer"
             )
             prev_token_type = "DROPPED"
@@ -384,7 +391,7 @@ def extract_sentence_representations(
                 assert prev_token_type != "DROPPED", (
                     "A token dropped by the tokenizer appeared next "
                     + "to a special token. Detokenizer cannot resolve "
-                    + f"the ambiguity, please remove '{sentence}' from"
+                    + f"the ambiguity, please remove '{' '.join(sentence for sentence in sentence_list)}' from"
                     + "the dataset, or try a different tokenizer"
                 )
                 prev_token_type = "SPECIAL"
@@ -422,6 +429,7 @@ def extract_representations(
     filter_layers=None,
     dtype="float32",
     include_special_tokens=False,
+    input_sep=None,
 ):
     """
     Extract representations for an entire corpus and save them to disk
@@ -476,6 +484,9 @@ def extract_representations(
         Whether or not to special tokens in the extracted representations.
         Special tokens are tokens not present in the original sentence, but are
         added by the tokenizer, such as [CLS], [SEP] etc.
+
+    input_sep : str
+        Sentence separator in input file if multiple sentences are processed
     """
     print(f"Loading model: {model_desc}")
     model, tokenizer = get_model_and_tokenizer(
@@ -484,11 +495,19 @@ def extract_representations(
 
     print("Reading input corpus")
 
-    def corpus_generator(input_corpus_path):
+    def corpus_generator(input_corpus_path, separator):
         with open(input_corpus_path, "r") as fp:
-            for line in fp:
-                yield line.strip()
-            return
+            if separator:
+                for line in fp:
+                    assert len(line.strip().split(separator)) > 0 and len(line.strip().split(separator)) <= 2, \
+                            "Line in input file contains an incorrect amount of sentences. HuggingFace Tokenizer" \
+                            " cannot deal with more than two sentences at a time: %s " % line
+                    yield line.strip().split(separator)
+                return
+            else:
+                for line in fp:
+                    yield [line.strip()]
+                return
 
     print("Preparing output file")
     writer = ActivationsWriter.get_writer(
@@ -501,9 +520,9 @@ def extract_representations(
 
     print("Extracting representations from model")
     tokenization_counts = {}  # Cache for tokenizer rules
-    for sentence_idx, sentence in enumerate(corpus_generator(input_corpus)):
+    for sentence_idx, sentence_list in enumerate(corpus_generator(input_corpus, input_sep)):
         hidden_states, extracted_words = extract_sentence_representations(
-            sentence,
+            sentence_list,
             model,
             tokenizer,
             device=device,
