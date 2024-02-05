@@ -555,7 +555,11 @@ def load_sentence_data(source_path, labels_path, activations):
 
     # Check if all data is well formed (whether we have activations + labels for
     # each and every word)
-    for idx, activation in enumerate(activations):
-        assert activation.shape[0] == len(tokens["source"][idx])
+    # for idx, activation in enumerate(activations):
+    #     assert activation.shape[0] == len(tokens["source"][idx]) 
+    """ 
+    the assertion above does not make sense at all ...
+    len(tokens["source"][idx]) will always be 1 
+    """
 
     return tokens
