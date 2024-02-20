@@ -21,7 +21,7 @@ from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
 
-def get_model_and_tokenizer(model_desc, device="cpu", random_weights=False):
+def get_model_and_tokenizer(model_desc, device="cpu", random_weights=False, hf_token=None,):
     """
     Automatically get the appropriate ``transformers`` model and tokenizer based
     on the model description
@@ -40,6 +40,9 @@ def get_model_and_tokenizer(model_desc, device="cpu", random_weights=False):
         Whether the weights of the model should be randomized. Useful for analyses
         where one needs an untrained model.
 
+    hf_token : str, optional
+        HuggingFace access token for private HuggingFace models
+
     Returns
     -------
     model : transformers model
@@ -54,7 +57,7 @@ def get_model_and_tokenizer(model_desc, device="cpu", random_weights=False):
     else:
         model_name = model_desc[0]
         tokenizer_name = model_desc[1]
-    model = AutoModel.from_pretrained(model_name, output_hidden_states=True).to(device)
+    model = AutoModel.from_pretrained(model_name, output_hidden_states=True, token=hf_token).to(device)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     if random_weights:
@@ -430,6 +433,7 @@ def extract_representations(
     dtype="float32",
     include_special_tokens=False,
     input_sep=None,
+    hf_token=None,
 ):
     """
     Extract representations for an entire corpus and save them to disk
@@ -485,12 +489,15 @@ def extract_representations(
         Special tokens are tokens not present in the original sentence, but are
         added by the tokenizer, such as [CLS], [SEP] etc.
 
-    input_sep : str
+    input_sep : str, optional
         Sentence separator in input file if multiple sentences are processed
+
+    hf_token : str, optional
+        HuggingFace access token for private HuggingFace models
     """
     print(f"Loading model: {model_desc}")
     model, tokenizer = get_model_and_tokenizer(
-        model_desc, device=device, random_weights=random_weights
+        model_desc, device=device, random_weights=random_weights, hf_token=hf_token,
     )
 
     print("Reading input corpus")
