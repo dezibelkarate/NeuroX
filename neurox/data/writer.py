@@ -275,3 +275,148 @@ class JSONActivationsWriter(ActivationsWriter):
 
     def close(self):
         self.activations_file.close()
+
+##############################################################
+
+class PoolerWriter:
+    """
+    Class that encapsulates all available writers.
+
+    This is the only class that should be used by the rest of the library.
+
+    Attributes
+    ----------
+    pooler_filename : str
+        Filename for storing the activations. May not be used exactly if
+        ``decompose_layers`` is True.
+    filetype : str
+        An additional hint for the filetype. This argument is optional
+        The file type will be detected automatically from the filename if
+        none is supplied.
+    """
+
+    def __init__(
+        self,
+        pooler_filename,
+        filetype=None,
+        dtype="float32",
+    ):
+        self.pooler_filename = pooler_filename
+        self.dtype = dtype
+
+    def open(self):
+        """
+        Method to open the underlying files. Will be called automatically
+        by the class instance when necessary.
+        """
+        raise NotImplementedError("Use a specific writer or the `get_writer` method.")
+
+    def write_pooled(self, sentence_idx, CLS, pooled):
+        """Method to write a single sentence's pooler output to file"""
+        raise NotImplementedError("Use a specific writer or the `get_writer` method.")
+
+    def close(self):
+        """Method to close the udnerlying files."""
+        raise NotImplementedError("Use a specific writer or the `get_writer` method.")
+
+    @staticmethod
+    def get_writer(
+        pooler_filename,
+        filetype=None,
+        dtype="float32",
+    ):
+        """Method to get the correct writer based on filename and filetype"""
+        return PoolerWriterManager(
+            pooler_filename, filetype, dtype=dtype
+        )
+
+    @staticmethod
+    def add_writer_options(parser):
+        """Method to return argparse arguments specific to activation writers"""
+        parser.add_argument(
+            "--output_type",
+            choices=["autodetect", "hdf5", "json"],
+            default="autodetect",
+            help="Output format of the extracted representations. Default autodetects based on file extension.",
+        )
+
+class PoolerWriterManager(PoolerWriter):
+    """
+    Manager class that handles .
+
+    This class sits on top of the actual pooler writer to manage .
+    """
+
+    def __init__(
+        self,
+        pooler_filename,
+        filetype=None,
+        dtype="float32",
+    ):
+        super().__init__(
+            pooler_filename,
+            filetype=filetype,
+            dtype=dtype,
+        )
+
+        """if pooler_filename.endswith(".hdf5") or filetype == "hdf5":
+            self.base_writer = HDF5PooledWriter
+        elif pooler_filename.endswith(".json") or filetype == "json":"""
+        if pooler_filename.endswith(".json") or filetype =="json":
+            self.base_writer = JSONPoolerWriter
+        else:
+            raise NotImplementedError("filetype not supported. Use `hdf5` or `json`.")
+
+        self.pooler_filename = pooler_filename
+        # self.layers = None
+        self.pooler_writer = None
+
+    def open(self):
+        self.pooler_writer = self.base_writer(self.pooler_filename, dtype=self.dtype)
+        self.pooler_writer.open()
+
+    def write_pooled(self, sentence_idx, CLS, pooled):
+        if self.pooler_writer is None:
+            self.open()
+
+        self.pooler_writer.write_pooled(sentence_idx, CLS, pooled)
+
+    def close(self):
+        self.pooler_writer.close()
+
+
+class JSONPoolerWriter(PoolerWriter):
+    def __init__(self, pooler_filename, dtype="float32"):
+        super().__init__(pooler_filename, filetype="json")
+        if not self.pooler_filename.endswith(".json"):
+            raise ValueError(
+                f"Output filename ({self.pooler_filename}) does not end with .json, but output file type is json."
+            )
+        self.dtype = dtype
+        self.pooler_file = None
+
+    def open(self):
+        self.pooler_file = open(self.pooler_filename, "w", encoding="utf-8")
+
+    def write_pooled(self, sentence_idx, CLS, pooled):
+        if self.pooler_file is None:
+            self.open()
+
+        output_json = collections.OrderedDict()
+        output_json["linex_index"] = sentence_idx
+        all_out_features = []
+
+        layers = collections.OrderedDict()
+        layers["index"] = 0
+        layers["values"] = [
+            round(x.item(), 8) for x in pooled[0, :]
+        ]
+        out_features = collections.OrderedDict()
+        out_features["token"] = CLS
+        out_features["layers"] = layers
+        all_out_features.append(out_features)
+        output_json["features"] = all_out_features
+        self.pooler_file.write(json.dumps(output_json) + "\n")
+
+    def close(self):
+        self.pooler_file.close()

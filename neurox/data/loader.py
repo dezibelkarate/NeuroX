@@ -124,10 +124,17 @@ def load_activations(
                 token_acts = []
                 sentence_activations = json.loads(line)["features"]
                 for act in sentence_activations:
-                    num_neurons_per_layer = len(act["layers"][0]["values"])
-                    token_acts.append(
-                        np.concatenate([l["values"] for l in act["layers"]])
-                    )
+                    try:
+                        num_neurons_per_layer = len(act["layers"][0]["values"])
+                        token_acts.append(
+                            np.concatenate([l["values"] for l in act["layers"]])
+                        )
+                    except KeyError:
+                        num_neurons_per_layer = len(act["layers"]["values"])
+                        token_acts.append(
+                            #np.concatenate([l["values"] for l in act["layers"]])
+                            act["layers"]["values"]
+                        )
                 activations.append(np.vstack(token_acts).astype(dtype))
 
         num_layers = activations[0].shape[1] / num_neurons_per_layer

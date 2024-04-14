@@ -15,13 +15,13 @@ import sys
 import numpy as np
 import torch
 
-from neurox.data.writer import ActivationsWriter
+from neurox.data.writer import ActivationsWriter, PoolerWriter
 
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
 
-def get_model_and_tokenizer(model_desc, device="cpu", random_weights=False, hf_token=None,):
+def get_model_and_tokenizer(model_desc, device="cpu", random_weights=False):
     """
     Automatically get the appropriate ``transformers`` model and tokenizer based
     on the model description
@@ -40,9 +40,6 @@ def get_model_and_tokenizer(model_desc, device="cpu", random_weights=False, hf_t
         Whether the weights of the model should be randomized. Useful for analyses
         where one needs an untrained model.
 
-    hf_token : str, optional
-        HuggingFace access token for private HuggingFace models
-
     Returns
     -------
     model : transformers model
@@ -57,7 +54,7 @@ def get_model_and_tokenizer(model_desc, device="cpu", random_weights=False, hf_t
     else:
         model_name = model_desc[0]
         tokenizer_name = model_desc[1]
-    model = AutoModel.from_pretrained(model_name, output_hidden_states=True, token=hf_token).to(device)
+    model = AutoModel.from_pretrained(model_name, output_hidden_states=True).to(device)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     if random_weights:
@@ -242,7 +239,12 @@ def extract_sentence_representations(
         input_ids = torch.tensor([ids]).to(device)
         # Hugging Face format: tuple of torch.FloatTensor of shape (batch_size, sequence_length, hidden_size)
         # Tuple has 13 elements for base model: embedding outputs + hidden states at each layer
-        all_hidden_states = model(input_ids)[-1]
+        
+        # TODO: all_hidden_states must include pooler output
+        # all_hidden_states = model(input_ids)[-1]
+        model_output = model(input_ids)
+        pooled_output = model_output.pooler_output
+        all_hidden_states = model_output.hidden_states
 
         if include_embeddings:
             all_hidden_states = [
@@ -253,6 +255,7 @@ def extract_sentence_representations(
                 hidden_states[0].cpu().numpy()
                 for hidden_states in all_hidden_states[1:]
             ]
+        pooled_output = np.array(pooled_output, dtype=dtype)
         all_hidden_states = np.array(all_hidden_states, dtype=dtype)
 
     print('Sentence         : "%s"' % " ".join(sentence for sentence in sentence_list))
@@ -416,13 +419,14 @@ def extract_sentence_representations(
         assert counter == len(filtered_ids)
         assert len(detokenized) == len(original_tokens) + len(special_token_ids)
     print("===================================================================")
-    return final_hidden_states, detokenized
+    return final_hidden_states, pooled_output, detokenized
 
 
 def extract_representations(
     model_desc,
     input_corpus,
     output_file,
+    pooler_file=None,
     device="cpu",
     aggregation="last",
     output_type="json",
@@ -433,7 +437,6 @@ def extract_representations(
     dtype="float32",
     include_special_tokens=False,
     input_sep=None,
-    hf_token=None,
 ):
     """
     Extract representations for an entire corpus and save them to disk
@@ -451,6 +454,9 @@ def extract_representations(
     output_file : str
         Path to output file. Supports all filetypes supported by
         ``data.writer.ActivationsWriter``.
+
+    pooler_file : str
+        Path to pooler file. Supports only json atm.
 
     device : str, optional
         Specifies the device (CPU/GPU) on which the extraction should be
@@ -489,15 +495,12 @@ def extract_representations(
         Special tokens are tokens not present in the original sentence, but are
         added by the tokenizer, such as [CLS], [SEP] etc.
 
-    input_sep : str, optional
+    input_sep : str
         Sentence separator in input file if multiple sentences are processed
-
-    hf_token : str, optional
-        HuggingFace access token for private HuggingFace models
     """
     print(f"Loading model: {model_desc}")
     model, tokenizer = get_model_and_tokenizer(
-        model_desc, device=device, random_weights=random_weights, hf_token=hf_token,
+        model_desc, device=device, random_weights=random_weights
     )
 
     print("Reading input corpus")
@@ -517,18 +520,25 @@ def extract_representations(
                 return
 
     print("Preparing output file")
-    writer = ActivationsWriter.get_writer(
-        output_file,
-        filetype=output_type,
-        decompose_layers=decompose_layers,
-        filter_layers=filter_layers,
-        dtype=dtype,
-    )
+    if output_file:
+        writer = ActivationsWriter.get_writer(
+            output_file,
+            filetype=output_type,
+            decompose_layers=decompose_layers,
+            filter_layers=filter_layers,
+            dtype=dtype,
+        )
+    if pooler_file:
+        pooler_writer = PoolerWriter.get_writer(
+            pooler_file,
+            filetype=output_type,
+            dtype=dtype
+        )
 
     print("Extracting representations from model")
     tokenization_counts = {}  # Cache for tokenizer rules
     for sentence_idx, sentence_list in enumerate(corpus_generator(input_corpus, input_sep)):
-        hidden_states, extracted_words = extract_sentence_representations(
+        hidden_states, pooled_output, extracted_words = extract_sentence_representations(
             sentence_list,
             model,
             tokenizer,
@@ -541,11 +551,18 @@ def extract_representations(
         )
 
         print("Hidden states: ", hidden_states.shape)
+        print("Pooled layer: ", pooled_output.shape)
         print("# Extracted words: ", len(extracted_words))
 
-        writer.write_activations(sentence_idx, extracted_words, hidden_states)
+        if output_file:
+            writer.write_activations(sentence_idx, extracted_words, hidden_states)
+        if pooler_file:
+            pooler_writer.write_pooled(sentence_idx, extracted_words[0], pooled_output)
 
-    writer.close()
+    if output_file:
+        writer.close()
+    if pooler_file:
+        pooler_writer.close()
 
 
 HDF5_SPECIAL_TOKENS = {".": "__DOT__", "/": "__SLASH__"}
@@ -560,6 +577,10 @@ def main():
     parser.add_argument(
         "output_file",
         help="Output file path where extracted representations will be stored",
+    )
+    parser.add_argument(
+        "--pooler_file",
+        help="Output file path where pooled representations will be stored",
     )
     parser.add_argument(
         "--aggregation",
@@ -608,6 +629,7 @@ def main():
         args.model_desc,
         args.input_corpus,
         args.output_file,
+        args.pooler_file,
         device=device,
         aggregation=args.aggregation,
         output_type=args.output_type,
