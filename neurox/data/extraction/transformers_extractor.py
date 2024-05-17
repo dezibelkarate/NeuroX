@@ -425,7 +425,7 @@ def extract_sentence_representations(
 def extract_representations(
     model_desc,
     input_corpus,
-    output_file,
+    output_file=None,
     pooler_file=None,
     device="cpu",
     aggregation="last",
@@ -562,7 +562,7 @@ def extract_representations(
     if output_file:
         writer.close()
     if pooler_file:
-        pooler_writer.close()
+        pass#pooler_writer.close()
 
 
 HDF5_SPECIAL_TOKENS = {".": "__DOT__", "/": "__SLASH__"}
