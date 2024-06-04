@@ -19,9 +19,10 @@ from neurox.data.writer import ActivationsWriter, PoolerWriter
 
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
+from reduced_bert import REDUCED_BertForSequenceClassification
 
 
-def get_model_and_tokenizer(model_desc, device="cpu", random_weights=False):
+def get_model_and_tokenizer(model_desc, ranked_neurons=None, classifier_weights=None, device="cpu", random_weights=False):
     """
     Automatically get the appropriate ``transformers`` model and tokenizer based
     on the model description
@@ -54,7 +55,16 @@ def get_model_and_tokenizer(model_desc, device="cpu", random_weights=False):
     else:
         model_name = model_desc[0]
         tokenizer_name = model_desc[1]
-    model = AutoModel.from_pretrained(model_name, output_hidden_states=True).to(device)
+    if ranked_neurons is not None and classifier_weights is not None:
+        model = REDUCED_BertForSequenceClassification.from_pretrained(model_name, 
+                                                                        ranked_neurons, 
+                                                                        classifier_weights, 
+                                                                        output_hidden_states=True,
+                                                                        #device=device
+                                                                        ignore_mismatched_sizes=True
+                                                                    ).to(device)
+    else:
+        model = AutoModel.from_pretrained(model_name, output_hidden_states=True).to(device)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     if random_weights:
@@ -425,6 +435,8 @@ def extract_sentence_representations(
 def extract_representations(
     model_desc,
     input_corpus,
+    ranked_neurons=None,
+    classifier_weights=None,
     output_file=None,
     pooler_file=None,
     device="cpu",
@@ -450,6 +462,10 @@ def extract_representations(
 
     input_corpus : str
         Path to the input corpus, where each sentence is on its separate line
+
+    ranked_neurons : TODO: add description
+
+    classifier_weights : TODO: add description
 
     output_file : str
         Path to output file. Supports all filetypes supported by
@@ -500,7 +516,7 @@ def extract_representations(
     """
     print(f"Loading model: {model_desc}")
     model, tokenizer = get_model_and_tokenizer(
-        model_desc, device=device, random_weights=random_weights
+        model_desc, ranked_neurons, classifier_weights, device=device, random_weights=random_weights
     )
 
     print("Reading input corpus")
