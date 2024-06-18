@@ -19,7 +19,7 @@ from neurox.data.writer import ActivationsWriter, PoolerWriter
 
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
-from reduced_bert import REDUCED_BertForSequenceClassification
+# from reduced_bert import REDUCED_BertForSequenceClassification
 
 
 def get_model_and_tokenizer(model_desc, device="cpu", random_weights=False):
